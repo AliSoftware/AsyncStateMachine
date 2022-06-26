@@ -5,24 +5,19 @@ where S: DSLCompatible & Sendable, E: DSLCompatible & Sendable, O: DSLCompatible
   public typealias Element = S
   public typealias AsyncIterator = Iterator
 
-  public let stateMachine: StateMachine<S, E, O>
-  let runtime: Runtime<S, E, O>
-  let channel: AsyncChannel<E>
+  let executor: Executor<S, E, O>
+//  let runtime: Runtime<S, E, O>
+//  let channel: AsyncChannel<E>
 
   public init(
     stateMachine: StateMachine<S, E, O>,
     runtime: Runtime<S, E, O>
   ) {
-    self.stateMachine = stateMachine
-    self.runtime = runtime
-    self.channel = AsyncChannel()
-    self.runtime.register(
-      eventEntryPoint: { [weak channel] event in await channel?.send(event) }
-    )
+    self.executor = Executor(stateMachine: stateMachine, runtime: runtime)
   }
 
   public func send(_ event: E) async {
-    await self.channel.send(event)
+    await self.executor.eventHandler(event)
   }
 
   public func send(
@@ -34,13 +29,14 @@ where S: DSLCompatible & Sendable, E: DSLCompatible & Sendable, O: DSLCompatible
         continuation.resume()
         return
       }
-      let id: UUID = self.runtime.register(middleware: { (state: S) in
-        if predicate(state) {
-          self.runtime.unregisterStateMiddleware(id: id)
-          continuation.resume()
-        }
-      })
+
       Task {
+        let removeMiddleware = await self.executor.register(temporaryMiddleware: { (state: S) in
+          if predicate(state) {
+            self.runtime.unregisterStateMiddleware(id: id)
+            continuation.resume()
+          }
+        })
         await self.send(event)
       }
     }
@@ -76,10 +72,6 @@ where S: DSLCompatible & Sendable, E: DSLCompatible & Sendable, O: DSLCompatible
     )
   }
 
-  deinit {
-    self.runtime.cancelWorksInProgress()
-  }
-
   public func makeAsyncIterator() -> Iterator {
     Iterator(asyncStateMachineSequence: self)
   }
@@ -104,7 +96,7 @@ where S: DSLCompatible & Sendable, E: DSLCompatible & Sendable, O: DSLCompatible
       self.currentState = state
       await self.asyncStateMachineSequence.runtime.executeStateMiddlewares(for: state)
       let output = self.asyncStateMachineSequence.stateMachine.output(when: state)
-      self.asyncStateMachineSequence.runtime.handleSideEffect(
+      await self.asyncStateMachineSequence.runtime.handleSideEffect(
         state: state,
         output: output,
         handleEvent: self.asyncStateMachineSequence.send)

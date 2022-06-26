@@ -1,3 +1,10 @@
+//
+//  XCTStateMachine.swift
+//
+//
+//  Created by Thibault WITTEMBERG on 25/06/2022.
+//
+
 #if DEBUG
 public class XCTStateMachine<S, E, O>
 where 
